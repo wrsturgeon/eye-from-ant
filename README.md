@@ -1,0 +1,1 @@
+# Training a three-legged robot, mainly following [this tutorial](https://github.com/google/brax/blob/5b5e6b55e0a2ce4ba5881ec54c5e2795d1dcd7eb/notebooks/training.ipynb) and [this environment](https://github.com/google/brax/blob/5b5e6b55e0a2ce4ba5881ec54c5e2795d1dcd7eb/brax/envs/ant.py).
