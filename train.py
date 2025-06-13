@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+
+
+import eye
+from datetime import datetime
+import brax
+from brax import envs
+from brax.io import image, json, model
+from brax.training.agents.ppo import networks as ppo_networks, train as ppo
+from brax.training.agents.sac import train as sac
+from cv2 import VideoWriter, VideoWriter_fourcc as fourcc
+import flax
+import functools
+import jax
+from jax import numpy as jp
+import matplotlib.pyplot as plt
+import os
+
+
+env_name = "eye"
+backend = "mjx"
+
+env = envs.get_environment(env_name=env_name, backend=backend)
+state = jax.jit(env.reset)(rng=jax.random.PRNGKey(seed=0))
+
+with open("init.png", "wb") as f:
+    f.write(image.render(env.sys, [state.pipeline_state]))
+
+# # Training
+#
+# Brax provides out of the box the following training algorithms:
+#
+# * [Proximal policy optimization](https://github.com/google/brax/blob/main/brax/training/agents/ppo/train.py)
+# * [Soft actor-critic](https://github.com/google/brax/blob/main/brax/training/agents/sac/train.py)
+# * [Evolutionary strategy](https://github.com/google/brax/blob/main/brax/training/agents/es/train.py)
+# * [Analytic policy gradients](https://github.com/google/brax/blob/main/brax/training/agents/apg/train.py)
+# * [Augmented random search](https://github.com/google/brax/blob/main/brax/training/agents/ars/train.py)
+#
+# Trainers take as input an environment function and some hyperparameters, and return an inference function to operate the environment.
+#
+# # Training
+#
+# Let's train the eye policy using the `mjx` backend with PPO.
+
+# @title Training
+
+# We determined some reasonable hyperparameters offline and share them here.
+train_fn = functools.partial(
+    ppo.train,
+    num_timesteps=100_000_000,  # 50_000_000,
+    num_evals=10,
+    reward_scaling=10,
+    episode_length=1000,
+    normalize_observations=True,
+    action_repeat=1,
+    unroll_length=5,
+    num_minibatches=32,
+    num_updates_per_batch=4,
+    discounting=0.97,
+    learning_rate=3e-4,
+    entropy_cost=1e-2,
+    num_envs=4096,
+    batch_size=2048,
+    seed=1,
+)
+
+
+max_y = 8_000
+min_y = 0
+
+xdata, ydata = [], []
+times = [datetime.now()]
+
+
+def progress(num_steps, metrics):
+    times.append(datetime.now())
+    xdata.append(num_steps)
+    ydata.append(metrics["eval/episode_reward"])
+    plt.xlim([0, train_fn.keywords["num_timesteps"]])
+    plt.ylim([min_y, max_y])
+    plt.xlabel("# environment steps")
+    plt.ylabel("reward per episode")
+    plt.plot(xdata, ydata)
+    plt.show()
+
+
+make_inference_fn, params, _ = train_fn(environment=env, progress_fn=progress)
+
+print(f"time to jit: {times[1] - times[0]}")
+print(f"time to train: {times[-1] - times[1]}")
+
+# The trainers return an inference function, parameters, and the final set of metrics gathered during evaluation.
+#
+# # Saving and Loading Policies
+#
+# Brax can save and load trained policies:
+
+model.save_params("/tmp/params", params)
+params = model.load_params("/tmp/params")
+inference_fn = make_inference_fn(params)
+
+# The trainers return an inference function, parameters, and the final set of metrics gathered during evaluation.
+#
+# # Saving and Loading Policies
+#
+# Brax can save and load trained policies:
+
+# @title Visualizing a trajectory of the learned inference function
+
+# create an env with auto-reset
+env = envs.create(env_name=env_name, backend=backend)
+
+jit_env_reset = jax.jit(env.reset)
+jit_env_step = jax.jit(env.step)
+jit_inference_fn = jax.jit(inference_fn)
+
+rollout = []
+rng = jax.random.PRNGKey(seed=1)
+state = jit_env_reset(rng=rng)
+for _ in range(1000):
+    rollout.append(state.pipeline_state)
+    act_rng, rng = jax.random.split(rng)
+    act, _ = jit_inference_fn(state.obs, act_rng)
+    state = jit_env_step(state, act)
+
+with open("trained.mp4", "wb") as f:
+    frames = image.render_array(env.sys.tree_replace({"opt.timestep": env.dt}), rollout)
+    writer = VideoWriter(
+        f"trained.mp4",
+        fourcc(*"mp4v"),
+        int(1 / env.dt),
+        frames[0].shape[:-1][::-1],
+    )
+    for frame in frames:
+        writer.write(frame[..., ::-1])
+    writer.release()
+
+# 🙌 See you soon!
