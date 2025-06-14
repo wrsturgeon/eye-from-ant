@@ -12,9 +12,10 @@ from cv2 import VideoWriter, VideoWriter_fourcc as fourcc
 import flax
 import functools
 import jax
-from jax import numpy as jp
+from jax import jit, numpy as jp, random as jr
 import matplotlib.pyplot as plt
-import os
+from os import makedirs
+from typing import Any, Callable, Dict, Tuple
 
 
 env_name = "eye"
@@ -47,7 +48,7 @@ with open("init.png", "wb") as f:
 # We determined some reasonable hyperparameters offline and share them here.
 train_fn = functools.partial(
     ppo.train,
-    num_timesteps=100_000_000,  # 50_000_000,
+    num_timesteps=50_000_000,
     num_evals=10,
     reward_scaling=10,
     episode_length=1000,
@@ -81,10 +82,61 @@ def progress(num_steps, metrics):
     plt.xlabel("# environment steps")
     plt.ylabel("reward per episode")
     plt.plot(xdata, ydata)
-    plt.show()
+    plt.savefig(f"reward_after_{num_steps}_steps.png")
 
 
-make_inference_fn, params, _ = train_fn(environment=env, progress_fn=progress)
+EVAL_ENV = envs.get_environment(env_name=env_name, backend=backend)
+JIT_RESET = jit(EVAL_ENV.reset)
+JIT_STEP = jit(EVAL_ENV.step)
+RENDER = EVAL_ENV.render
+
+
+N_SNAPSHOTS = 5
+N_STEPS_PER_SNAPSHOT = int(5 / EVAL_ENV.dt)
+
+
+def snapshot(
+    current_step: int,
+    make_policy: Callable,
+    params,
+) -> None:
+    print(f"Rendering a snapshot...")
+    policy = make_policy(params)
+    snapshot_folder = f"snapshot_step_{current_step}"
+    makedirs(snapshot_folder, exist_ok=True)
+    keys = jr.split(jr.PRNGKey(42), N_SNAPSHOTS)
+    for sample_number, key in enumerate(keys):
+        key, *keys = jr.split(key, 1 + N_STEPS_PER_SNAPSHOT)
+        state = JIT_RESET(key)
+        rollout = []
+        for i, key in enumerate(keys):
+            result = policy(state.obs, key)
+            ctrl, _ = result
+            state = JIT_STEP(state, ctrl)
+            rollout.append(state.pipeline_state)
+            if state.done:
+                break
+        if len(rollout) == 0:
+            makedirs(f"{snapshot_folder}/sample_{sample_number}_was_empty")
+        else:
+            video = RENDER(rollout)
+            assert len(video) > 0, "Empty video!"
+            writer = VideoWriter(
+                f"{snapshot_folder}/sample_{sample_number}.mp4",
+                fourcc(*"mp4v"),
+                int(1 / EVAL_ENV.dt),
+                video[0].shape[:-1][::-1],
+            )
+            for frame in video:
+                writer.write(frame[..., ::-1])
+            writer.release()
+
+
+
+
+make_inference_fn, params, _ = train_fn(
+    environment=env, progress_fn=progress, policy_params_fn=snapshot
+)
 
 print(f"time to jit: {times[1] - times[0]}")
 print(f"time to train: {times[-1] - times[1]}")
