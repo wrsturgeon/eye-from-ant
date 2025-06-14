@@ -51,7 +51,7 @@
     </body>
   </worldbody>
   <actuator>
-    <motor ctrllimited="true" ctrlrange="-0.25 0.25" joint="hip" gear="150"/>
-    <motor ctrllimited="true" ctrlrange="-0.25 0.25" joint="ankle" gear="150"/>
+    <motor ctrllimited="true" ctrlrange="-0.375 0.375" joint="hip" gear="150"/>
+    <motor ctrllimited="true" ctrlrange="-0.375 0.375" joint="ankle" gear="150"/>
   </actuator>
 </mujoco>
