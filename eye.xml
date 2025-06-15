@@ -17,8 +17,8 @@
   </custom>
   <default>
     <geom contype="0" conaffinity="0" condim="3" density="5" friction="1 0.5 0.5" rgba="0.4 0.33 0.26 1"/>
-    <joint armature="0.045" range="-90 90"/>
-    <position kp="211" ctrllimited="true" inheritrange="1" dampratio="1" forcelimited="true" forcerange="-5 5"/>
+    <joint armature="0.045" frictionloss="0.03" range="-90 90"/>
+    <position kp="21.1" ctrllimited="true" inheritrange="1" dampratio="1" forcelimited="true" forcerange="-5 5"/>
   </default>
   <asset>
     <texture builtin="gradient" height="100" rgb1="1 1 1" rgb2="0 0 0" type="skybox" width="100"/>
