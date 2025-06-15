@@ -139,35 +139,13 @@ class Eye(PipelineEnv):
         contact_force_range=(-1.0, 1.0),
         reset_noise_scale=0.1,
         exclude_current_positions_from_observation=True,
-        backend="generalized",
+        backend="mjx",
         **kwargs,
     ):
         path = "./eye.xml"  # epath.resource_path("brax") / "envs/assets/ant.xml"
         sys = mjcf.load(path)
 
         n_frames = 5
-
-        if backend in ["spring", "positional"]:
-            sys = sys.tree_replace({"opt.timestep": 0.005})
-            n_frames = 10
-
-        if backend == "mjx":
-            sys = sys.tree_replace(
-                {
-                    "opt.solver": mujoco.mjtSolver.mjSOL_NEWTON,
-                    "opt.disableflags": mujoco.mjtDisableBit.mjDSBL_EULERDAMP,
-                    "opt.iterations": 1,
-                    "opt.ls_iterations": 4,
-                }
-            )
-
-        if backend == "positional":
-            # TODO: does the same actuator strength work as in spring
-            sys = sys.replace(
-                actuator=sys.actuator.replace(
-                    gear=200 * jp.ones_like(sys.actuator.gear)
-                )
-            )
 
         kwargs["n_frames"] = kwargs.get("n_frames", n_frames)
 
