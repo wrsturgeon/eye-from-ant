@@ -48,7 +48,7 @@ with open("init.png", "wb") as f:
 # We determined some reasonable hyperparameters offline and share them here.
 train_fn = functools.partial(
     ppo.train,
-    num_timesteps=50_000_000,
+    num_timesteps=100_000_000,  # 50_000_000,
     num_evals=10,
     reward_scaling=10,
     episode_length=1000,
@@ -130,8 +130,6 @@ def snapshot(
             for frame in video:
                 writer.write(frame[..., ::-1])
             writer.release()
-
-
 
 
 make_inference_fn, params, _ = train_fn(
