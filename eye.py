@@ -34,18 +34,16 @@ class Eye(PipelineEnv):
 
     The action space is a continuous `(action, action, action, action, action,
     action, action, action)` all in `[-1, 1]`, where `action` represents the
-    numerical torques applied at the hinge joints.
+    numerical positions of the hinge joints.
 
-    | Num | Action                                                             | Control Min | Control Max | Name (in corresponding config)   | Joint | Unit         |
-    |-----|--------------------------------------------------------------------|-------------|-------------|----------------------------------|-------|--------------|
-    |  0  | Torque applied on the rotor between the torso and front left hip   | -1          | 1           | hip_1 (front_left_leg)           | hinge | torque (N m) |
-    |  1  | Torque applied on the rotor between the front left two links       | -1          | 1           | ankle_1 (front_left_leg)         | hinge | torque (N m) |
-    |  2  | Torque applied on the rotor between the torso and front right hip  | -1          | 1           | hip_2 (front_right_leg)          | hinge | torque (N m) |
-    |  3  | Torque applied on the rotor between the front right two links      | -1          | 1           | ankle_2 (front_right_leg)        | hinge | torque (N m) |
-    |  4  | Torque applied on the rotor between the torso and back left hip    | -1          | 1           | hip_3 (back_leg)                 | hinge | torque (N m) |
-    |  5  | Torque applied on the rotor between the back left two links        | -1          | 1           | ankle_3 (back_leg)               | hinge | torque (N m) |
-    | N/A | Torque applied on the rotor between the torso and back right hip   | -1          | 1           | hip_4 (right_back_leg)           | hinge | torque (N m) |
-    | N/A | Torque applied on the rotor between the back right two links       | -1          | 1           | ankle_4 (right_back_leg)         | hinge | torque (N m) |
+    | Num | Action                                                       | Control Min | Control Max | Name (in corresponding config)   | Joint | Unit        |
+    |-----|--------------------------------------------------------------|-------------|-------------|----------------------------------|-------|-------------|
+    |  0  | Position of the rotor between the torso and front left hip   | -pi (360 d) | pi (360 d)  | hip_1 (front_left_leg)           | hinge | angle (rad) |
+    |  1  | Position of the rotor between the front left two links       | -pi (360 d) | pi (360 d)  | ankle_1 (front_left_leg)         | hinge | angle (rad) |
+    |  2  | Position of the rotor between the torso and front right hip  | -pi (360 d) | pi (360 d)  | hip_2 (front_right_leg)          | hinge | angle (rad) |
+    |  3  | Position of the rotor between the front right two links      | -pi (360 d) | pi (360 d)  | ankle_2 (front_right_leg)        | hinge | angle (rad) |
+    |  4  | Position of the rotor between the torso and back left hip    | -pi (360 d) | pi (360 d)  | hip_3 (back_leg) (360 d)         | hinge | angle (rad) |
+    |  5  | Position of the rotor between the back left two links        | -pi (360 d) | pi (360 d)  | ankle_3 (back_leg)               | hinge | angle (rad) |
 
     ### Observation Space
 
@@ -68,8 +66,6 @@ class Eye(PipelineEnv):
     |  8  | angle between the two links on the front right               | -Inf | Inf | ankle_2 (front_right_leg)        | hinge | angle (rad)              |
     |  9  | angle between torso and first link on back left              | -Inf | Inf | hip_3 (back_leg)                 | hinge | angle (rad)              |
     | 10  | angle between the two links on the back left                 | -Inf | Inf | ankle_3 (back_leg)               | hinge | angle (rad)              |
-    | N/A | angle between torso and first link on back right             | -Inf | Inf | hip_4 (right_back_leg)           | hinge | angle (rad)              |
-    | N/A | angle between the two links on the back right                | -Inf | Inf | ankle_4 (right_back_leg)         | hinge | angle (rad)              |
     | 11  | x-coordinate velocity of the torso                           | -Inf | Inf | torso                            | free  | velocity (m/s)           |
     | 12  | y-coordinate velocity of the torso                           | -Inf | Inf | torso                            | free  | velocity (m/s)           |
     | 13  | z-coordinate velocity of the torso                           | -Inf | Inf | torso                            | free  | velocity (m/s)           |
@@ -82,8 +78,6 @@ class Eye(PipelineEnv):
     | 20  | angular velocity of the angle between front right links      | -Inf | Inf | ankle_2 (front_right_leg)        | hinge | angle (rad)              |
     | 21  | angular velocity of angle between torso and back left link   | -Inf | Inf | hip_3 (back_leg)                 | hinge | angle (rad)              |
     | 22  | angular velocity of the angle between back left links        | -Inf | Inf | ankle_3 (back_leg)               | hinge | angle (rad)              |
-    | N/A | angular velocity of angle between torso and back right link  | -Inf | Inf | hip_4 (right_back_leg)           | hinge | angle (rad)              |
-    | N/A | angular velocity of the angle between back right links       | -Inf | Inf | ankle_4 (right_back_leg)         | hinge | angle (rad)              |
 
     The (x,y,z) coordinates are translational DOFs while the orientations are
     rotational DOFs expressed as quaternions.
@@ -98,10 +92,7 @@ class Eye(PipelineEnv):
       *(x-coordinate before action - x-coordinate after action)/dt*. *dt* is the
       time between actions - the default *dt = 0.05*. This reward would be
       positive if the ant moves forward (right) desired.
-    - *reward_ctrl*: A negative reward for penalising the ant if it takes actions
-      that are too large. It is measured as *coefficient **x**
-      sum(action<sup>2</sup>)* where *coefficient* is a parameter set for the
-      control and has a default value of 0.5.
+    - *reward_ctrl*: A negative reward for penalising the ant for total ctrl used.
     - *contact_cost*: A negative reward for penalising the ant if the external
       contact force is too large. It is calculated *0.5 * 0.001 *
       sum(clip(external contact force to [-1,1])<sup>2</sup>)*.
@@ -214,7 +205,7 @@ class Eye(PipelineEnv):
             healthy_reward = self._healthy_reward
         else:
             healthy_reward = self._healthy_reward * is_healthy
-        ctrl_cost = self._ctrl_cost_weight * jp.sum(jp.square(action))
+        ctrl_cost = self._ctrl_cost_weight * jp.sum(jp.abs(action - last_action))
         contact_cost = 0.0
 
         obs = self._get_obs(pipeline_state)
@@ -244,7 +235,7 @@ class Eye(PipelineEnv):
         if self._exclude_current_positions_from_observation:
             qpos = pipeline_state.q[2:]
 
-        return jp.concatenate([qpos] + [qvel])
+        return jp.concatenate((qpos, qvel))
 
 
 envs.register_environment("eye", Eye)
