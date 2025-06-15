@@ -134,8 +134,8 @@ class Eye(PipelineEnv):
         use_contact_forces=False,
         contact_cost_weight=5e-4,
         healthy_reward=1.0,
-        terminate_when_unhealthy=False, # True,
-        healthy_z_range=(0.2, 1.0),
+        terminate_when_unhealthy=True,
+        healthy_z_range=(0.2, None),
         contact_force_range=(-1.0, 1.0),
         reset_noise_scale=0.1,
         exclude_current_positions_from_observation=True,
@@ -226,8 +226,12 @@ class Eye(PipelineEnv):
         forward_reward = velocity[0]
 
         min_z, max_z = self._healthy_z_range
-        is_healthy = jp.where(pipeline_state.x.pos[0, 2] < min_z, 0.0, 1.0)
-        is_healthy = jp.where(pipeline_state.x.pos[0, 2] > max_z, 0.0, is_healthy)
+        zpos = pipeline_state.x.pos[0, 2]
+        is_healthy = jp.ones(zpos.shape)
+        if min_z is not None:
+            is_healthy = jp.where(zpos < min_z, 0.0, is_healthy)
+        if max_z is not None:
+            is_healthy = jp.where(zpos > max_z, 0.0, is_healthy)
         if self._terminate_when_unhealthy:
             healthy_reward = self._healthy_reward
         else:
