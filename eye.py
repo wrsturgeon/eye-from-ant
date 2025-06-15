@@ -142,7 +142,7 @@ class Eye(PipelineEnv):
         backend="mjx",
         **kwargs,
     ):
-        path = "./eye.xml"  # epath.resource_path("brax") / "envs/assets/ant.xml"
+        path = "./eye.xml"
         sys = mjcf.load(path)
 
         n_frames = 5
