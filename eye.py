@@ -109,10 +109,7 @@ class Eye(PipelineEnv):
       positive if the ant moves forward (right) desired.
     - *reward_orientation*: Reward for facing forward, not turning, flipping, etc.
     - *reward_survive*: Every timestep that the ant is alive, it gets a reward of 1.
-    - *reward_ctrl*: A negative reward for penalising the ant if it takes actions
-      that are too large. It is measured as *coefficient **x**
-      sum(action<sup>2</sup>)* where *coefficient* is a parameter set for the
-      control and has a default value of 0.5.
+    - *reward_torque*: A negative reward for total torque used.
     # - *contact_cost*: A negative reward for penalising the ant if the external
     #   contact force is too large. It is calculated *0.5 * 0.001 *
     #   sum(clip(external contact force to [-1,1])<sup>2</sup>)*.
@@ -140,7 +137,7 @@ class Eye(PipelineEnv):
 
     def __init__(
         self,
-        ctrl_cost_weight=0.5,
+        torque_cost_weight=0.5,
         # contact_cost_weight=5e-4,
         healthy_reward=1.0,
         terminate_when_unhealthy=True,
@@ -159,7 +156,7 @@ class Eye(PipelineEnv):
 
         super().__init__(sys=sys, backend=backend, **kwargs)
 
-        self._ctrl_cost_weight = ctrl_cost_weight
+        self._torque_cost_weight = torque_cost_weight
         # self._contact_cost_weight = contact_cost_weight
         self._healthy_reward = healthy_reward
         self._terminate_when_unhealthy = terminate_when_unhealthy
@@ -188,7 +185,7 @@ class Eye(PipelineEnv):
             "reward_forward": zero,
             "reward_orientation": zero,
             "reward_survive": zero,
-            "reward_ctrl": zero,
+            "reward_torque": zero,
             # "reward_contact": zero,
             "x_position": zero,
             "y_position": zero,
@@ -236,7 +233,7 @@ class Eye(PipelineEnv):
             healthy_reward = self._healthy_reward * is_healthy
 
         servo_torques = pipeline_state.qfrc_actuator[:-(N_LEGS * SERVOS_PER_LEG)]
-        ctrl_cost = self._ctrl_cost_weight * jp.sum(
+        torque_cost = self._torque_cost_weight * jp.sum(
             jp.abs(servo_torques)
         )
 
@@ -245,7 +242,7 @@ class Eye(PipelineEnv):
             forward_reward
             + orientation_reward
             + healthy_reward
-            - ctrl_cost
+            - torque_cost
             # - contact_cost
         )
         done = 1.0 - is_healthy if self._terminate_when_unhealthy else 0.0
@@ -253,7 +250,7 @@ class Eye(PipelineEnv):
             reward_forward=forward_reward,
             reward_orientation=orientation_reward,
             reward_survive=healthy_reward,
-            reward_ctrl=-ctrl_cost,
+            reward_torque=-torque_cost,
             # reward_contact=-contact_cost,
             x_position=pipeline_state.x.pos[0, 0],
             y_position=pipeline_state.x.pos[0, 1],
