@@ -18,7 +18,7 @@
   <default>
     <geom contype="0" conaffinity="0" condim="3" density="5" friction="1 0.5 0.5" rgba="0.4 0.33 0.26 1"/>
     <joint armature="0.045" limited="true"/>
-    <position kp="211" ctrllimited="true" inheritrange="1" dampratio="1" forcelimited="true" forcerange="-5 5"/>
+    <position kp="256" ctrllimited="true" ctrlrange="-1.57079632679 1.57079632679" dampratio="1" forcelimited="true" forcerange="-5 5"/>
   </default>
   <asset>
     <texture builtin="gradient" height="100" rgb1="1 1 1" rgb2="0 0 0" type="skybox" width="100"/>
