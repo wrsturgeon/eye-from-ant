@@ -13,6 +13,13 @@ from jax import numpy as jp, debug
 import mujoco
 
 
+ACTION_SHAPE = (9,)
+OBSERVATION_SHAPE = (38,)
+
+
+IDEAL_VELOCITY = 1  # m/s
+
+
 class Eye(PipelineEnv):
     """
     ### Description
@@ -30,19 +37,22 @@ class Eye(PipelineEnv):
 
     ### Action Space
 
-    The agent takes a 6-element vector for actions.
+    The agent takes a vector for actions.
 
     The action space is a continuous `(action, action, action, action, action, action)`,
     all in `[-1, 1]`, where `action` represents the positions of a hinge joint.
 
-    | Num | Action                                                       | Control Min | Control Max | Name (in corresponding config)   | Joint | Unit        |
-    |-----|--------------------------------------------------------------|-------------|-------------|----------------------------------|-------|-------------|
-    |  0  | Position of the rotor between the torso and front left hip   | -pi (360 d) | pi (360 d)  | hip_1 (front_left_leg)           | hinge | angle (rad) |
-    |  1  | Position of the rotor between the front left two links       | -pi (360 d) | pi (360 d)  | ankle_1 (front_left_leg)         | hinge | angle (rad) |
-    |  2  | Position of the rotor between the torso and front right hip  | -pi (360 d) | pi (360 d)  | hip_2 (front_right_leg)          | hinge | angle (rad) |
-    |  3  | Position of the rotor between the front right two links      | -pi (360 d) | pi (360 d)  | ankle_2 (front_right_leg)        | hinge | angle (rad) |
-    |  4  | Position of the rotor between the torso and back left hip    | -pi (360 d) | pi (360 d)  | hip_3 (back_leg) (360 d)         | hinge | angle (rad) |
-    |  5  | Position of the rotor between the back left two links        | -pi (360 d) | pi (360 d)  | ankle_3 (back_leg)               | hinge | angle (rad) |
+    | Num | Action                                                       | Control Min | Control Max | Name (in corresponding config) | Joint | Unit        |
+    |-----|--------------------------------------------------------------|-------------|-------------|--------------------------------|-------|-------------|
+    |  0  | Position of the rotor between the torso and front left hip   | -pi (360 d) | pi (360 d)  | roll_1                         | hinge | angle (rad) |
+    |  1  | Position of the rotor between the torso and front left hip   | -pi (360 d) | pi (360 d)  | hip_1                          | hinge | angle (rad) |
+    |  2  | Position of the rotor between the front left two links       | -pi (360 d) | pi (360 d)  | knee_1                         | hinge | angle (rad) |
+    |  3  | Position of the rotor between the torso and front left hip   | -pi (360 d) | pi (360 d)  | roll_2                         | hinge | angle (rad) |
+    |  4  | Position of the rotor between the torso and front right hip  | -pi (360 d) | pi (360 d)  | hip_2                          | hinge | angle (rad) |
+    |  5  | Position of the rotor between the front right two links      | -pi (360 d) | pi (360 d)  | knee_2                         | hinge | angle (rad) |
+    |  6  | Position of the rotor between the torso and front left hip   | -pi (360 d) | pi (360 d)  | roll_3                         | hinge | angle (rad) |
+    |  7  | Position of the rotor between the torso and back left hip    | -pi (360 d) | pi (360 d)  | hip_3                          | hinge | angle (rad) |
+    |  8  | Position of the rotor between the back left two links        | -pi (360 d) | pi (360 d)  | knee_3                         | hinge | angle (rad) |
 
     ### Observation Space
 
@@ -50,39 +60,48 @@ class Eye(PipelineEnv):
     ant, followed by the velocities of those individual parts (their derivatives)
     with all the positions ordered before all the velocities.
 
-    The observation is a `ndarray` with shape `(29,)` where the elements correspond to the following:
+    The observation is an array whose elements correspond to the following:
 
-    | Num | Observation                                                  | Name (in corresponding config)   | Joint | Unit                     |
-    |-----|--------------------------------------------------------------|----------------------------------|-------|--------------------------|
-    |  0  | z-coordinate of the torso (centre)                           | torso                            | free  | position (m)             |
-    |  1  | w-orientation of the torso (centre)                          | torso                            | free  | angle (rad)              |
-    |  2  | x-orientation of the torso (centre)                          | torso                            | free  | angle (rad)              |
-    |  3  | y-orientation of the torso (centre)                          | torso                            | free  | angle (rad)              |
-    |  4  | z-orientation of the torso (centre)                          | torso                            | free  | angle (rad)              |
-    |  5  | angle between torso and first link on front left             | hip_1 (front_left_leg)           | hinge | angle (rad)              |
-    |  6  | angle between the two links on the front left                | ankle_1 (front_left_leg)         | hinge | angle (rad)              |
-    |  7  | angle between torso and first link on front right            | hip_2 (front_right_leg)          | hinge | angle (rad)              |
-    |  8  | angle between the two links on the front right               | ankle_2 (front_right_leg)        | hinge | angle (rad)              |
-    |  9  | angle between torso and first link on back left              | hip_3 (back_leg)                 | hinge | angle (rad)              |
-    | 10  | angle between the two links on the back left                 | ankle_3 (back_leg)               | hinge | angle (rad)              |
-    | 11  | x-coordinate velocity of the torso                           | torso                            | free  | velocity (m/s)           |
-    | 12  | y-coordinate velocity of the torso                           | torso                            | free  | velocity (m/s)           |
-    | 13  | z-coordinate velocity of the torso                           | torso                            | free  | velocity (m/s)           |
-    | 14  | x-coordinate angular velocity of the torso                   | torso                            | free  | angular velocity (rad/s) |
-    | 15  | y-coordinate angular velocity of the torso                   | torso                            | free  | angular velocity (rad/s) |
-    | 16  | z-coordinate angular velocity of the torso                   | torso                            | free  | angular velocity (rad/s) |
-    | 17  | angular velocity of angle between torso and front left link  | hip_1 (front_left_leg)           | hinge | angle (rad)              |
-    | 18  | angular velocity of the angle between front left links       | ankle_1 (front_left_leg)         | hinge | angle (rad)              |
-    | 19  | angular velocity of angle between torso and front right link | hip_2 (front_right_leg)          | hinge | angle (rad)              |
-    | 20  | angular velocity of the angle between front right links      | ankle_2 (front_right_leg)        | hinge | angle (rad)              |
-    | 21  | angular velocity of angle between torso and back left link   | hip_3 (back_leg)                 | hinge | angle (rad)              |
-    | 22  | angular velocity of the angle between back left links        | ankle_3 (back_leg)               | hinge | angle (rad)              |
-    | 23  | Last requested action between the torso and front left hip   | hip_1 (front_left_leg)           | hinge | angle (rad)              |
-    | 24  | Last requested action between the front left two links       | ankle_1 (front_left_leg)         | hinge | angle (rad)              |
-    | 25  | Last requested action between the torso and front right hip  | hip_2 (front_right_leg)          | hinge | angle (rad)              |
-    | 26  | Last requested action between the front right two links      | ankle_2 (front_right_leg)        | hinge | angle (rad)              |
-    | 27  | Last requested action between the torso and back left hip    | hip_3 (back_leg) (360 d)         | hinge | angle (rad)              |
-    | 28  | Last requested action between the back left two links        | ankle_3 (back_leg)               | hinge | angle (rad)              |
+    | Num | Observation                                                  | Name (in corresponding config) | Joint | Unit                     |
+    |-----|--------------------------------------------------------------|--------------------------------|-------|--------------------------|
+    |  0  | z-coordinate of the torso (centre)                           | torso                          | free  | position (m)             |
+    |  1  | w-orientation of the torso (centre)                          | torso                          | free  | angle (rad)              |
+    |  2  | x-orientation of the torso (centre)                          | torso                          | free  | angle (rad)              |
+    |  3  | y-orientation of the torso (centre)                          | torso                          | free  | angle (rad)              |
+    |  4  | z-orientation of the torso (centre)                          | torso                          | free  | angle (rad)              |
+    |  5  | joint angle                                                  | roll_1                         | hinge | angle (rad)              |
+    |  6  | joint angle                                                  | hip_1                          | hinge | angle (rad)              |
+    |  7  | joint angle                                                  | knee_1                         | hinge | angle (rad)              |
+    |  8  | joint angle                                                  | roll_2                         | hinge | angle (rad)              |
+    |  9  | joint angle                                                  | hip_2                          | hinge | angle (rad)              |
+    | 10  | joint angle                                                  | knee_2                         | hinge | angle (rad)              |
+    | 11  | joint angle                                                  | roll_3                         | hinge | angle (rad)              |
+    | 12  | joint angle                                                  | hip_3                          | hinge | angle (rad)              |
+    | 13  | joint angle                                                  | knee_3                         | hinge | angle (rad)              |
+    | 14  | x-coordinate velocity of the torso                           | torso                          | free  | velocity (m/s)           |
+    | 15  | y-coordinate velocity of the torso                           | torso                          | free  | velocity (m/s)           |
+    | 16  | z-coordinate velocity of the torso                           | torso                          | free  | velocity (m/s)           |
+    | 17  | x-coordinate angular velocity of the torso                   | torso                          | free  | angular velocity (rad/s) |
+    | 18  | y-coordinate angular velocity of the torso                   | torso                          | free  | angular velocity (rad/s) |
+    | 19  | z-coordinate angular velocity of the torso                   | torso                          | free  | angular velocity (rad/s) |
+    | 20  | joint angular velocity                                       | roll_1                         | hinge | angle (rad)              |
+    | 21  | joint angular velocity                                       | hip_1                          | hinge | angle (rad)              |
+    | 22  | joint angular velocity                                       | knee_1                         | hinge | angle (rad)              |
+    | 23  | joint angular velocity                                       | roll_2                         | hinge | angle (rad)              |
+    | 24  | joint angular velocity                                       | hip_2                          | hinge | angle (rad)              |
+    | 25  | joint angular velocity                                       | knee_2                         | hinge | angle (rad)              |
+    | 26  | joint angular velocity                                       | roll_3                         | hinge | angle (rad)              |
+    | 27  | joint angular velocity                                       | hip_3                          | hinge | angle (rad)              |
+    | 28  | joint angular velocity                                       | knee_3                         | hinge | angle (rad)              |
+    | 29  | last requested angle for this servo                          | roll_1                         | hinge | angle (rad)              |
+    | 30  | last requested angle for this servo                          | hip_1                          | hinge | angle (rad)              |
+    | 31  | last requested angle for this servo                          | knee_1                         | hinge | angle (rad)              |
+    | 32  | last requested angle for this servo                          | roll_2                         | hinge | angle (rad)              |
+    | 33  | last requested angle for this servo                          | hip_2                          | hinge | angle (rad)              |
+    | 34  | last requested angle for this servo                          | knee_2                         | hinge | angle (rad)              |
+    | 35  | last requested angle for this servo                          | roll_3                         | hinge | angle (rad)              |
+    | 36  | last requested angle for this servo                          | hip_3                          | hinge | angle (rad)              |
+    | 37  | last requested angle for this servo                          | knee_3                         | hinge | angle (rad)              |
 
     The (x,y,z) coordinates are translational DOFs while the orientations are
     rotational DOFs expressed as quaternions.
@@ -97,13 +116,13 @@ class Eye(PipelineEnv):
       positive if the ant moves forward (right) desired.
     - *reward_orientation*: Reward for facing forward, not turning, flipping, etc.
     - *reward_survive*: Every timestep that the ant is alive, it gets a reward of 1.
-    - *reward_ctrl*: A negative reward for penalising the ant if it takes actions
-      that are too large. It is measured as *coefficient **x**
-      sum(action<sup>2</sup>)* where *coefficient* is a parameter set for the
-      control and has a default value of 0.5.
-    - *contact_cost*: A negative reward for penalising the ant if the external
-      contact force is too large. It is calculated *0.5 * 0.001 *
-      sum(clip(external contact force to [-1,1])<sup>2</sup>)*.
+    # - *reward_ctrl*: A negative reward for penalising the ant if it takes actions
+    #   that are too large. It is measured as *coefficient **x**
+    #   sum(action<sup>2</sup>)* where *coefficient* is a parameter set for the
+    #   control and has a default value of 0.5.
+    # - *contact_cost*: A negative reward for penalising the ant if the external
+    #   contact force is too large. It is calculated *0.5 * 0.001 *
+    #   sum(clip(external contact force to [-1,1])<sup>2</sup>)*.
 
     ### Starting State
 
@@ -128,13 +147,11 @@ class Eye(PipelineEnv):
 
     def __init__(
         self,
-        ctrl_cost_weight=0.5,
-        use_contact_forces=False,
-        contact_cost_weight=5e-4,
+        # ctrl_cost_weight=0.5,
+        # contact_cost_weight=5e-4,
         healthy_reward=1.0,
         terminate_when_unhealthy=True,
         healthy_z_range=(0.2, None),
-        contact_force_range=(-1.0, 1.0),
         reset_noise_scale=0.1,
         exclude_current_positions_from_observation=True,
         backend="mjx",
@@ -149,33 +166,29 @@ class Eye(PipelineEnv):
 
         super().__init__(sys=sys, backend=backend, **kwargs)
 
-        self._ctrl_cost_weight = ctrl_cost_weight
-        self._use_contact_forces = use_contact_forces
-        self._contact_cost_weight = contact_cost_weight
+        # self._ctrl_cost_weight = ctrl_cost_weight
+        # self._contact_cost_weight = contact_cost_weight
         self._healthy_reward = healthy_reward
         self._terminate_when_unhealthy = terminate_when_unhealthy
         self._healthy_z_range = healthy_z_range
-        self._contact_force_range = contact_force_range
         self._reset_noise_scale = reset_noise_scale
         self._exclude_current_positions_from_observation = (
             exclude_current_positions_from_observation
         )
-
-        if self._use_contact_forces:
-            raise NotImplementedError("use_contact_forces not implemented.")
 
     def reset(self, rng: jax.Array) -> State:
         """Resets the environment to an initial state."""
         rng, rng1, rng2 = jax.random.split(rng, 3)
 
         low, hi = -self._reset_noise_scale, self._reset_noise_scale
-        q = self.sys.init_q + jax.random.uniform(
-            rng1, (self.sys.q_size(),), minval=low, maxval=hi
-        )
+        q = self.sys.init_q
+        # q += jax.random.uniform(
+        #     rng1, (self.sys.q_size(),), minval=low, maxval=hi
+        # )
         qd = hi * jax.random.normal(rng2, (self.sys.qd_size(),))
 
         pipeline_state = self.pipeline_init(q, qd)
-        last_action = jp.zeros((6,))
+        last_action = jp.zeros(ACTION_SHAPE)
         obs = self._get_obs(pipeline_state, last_action)
 
         reward, done, zero = jp.zeros(3)
@@ -183,8 +196,8 @@ class Eye(PipelineEnv):
             "reward_forward": zero,
             "reward_orientation": zero,
             "reward_survive": zero,
-            "reward_ctrl": zero,
-            "reward_contact": zero,
+            # "reward_ctrl": zero,
+            # "reward_contact": zero,
             "x_position": zero,
             "y_position": zero,
             "distance_from_origin": zero,
@@ -210,7 +223,7 @@ class Eye(PipelineEnv):
         pipeline_state = self.pipeline_step(pipeline_state0, action)
 
         velocity = (pipeline_state.x.pos[0] - pipeline_state0.x.pos[0]) / self.dt
-        forward_reward = velocity[0]
+        forward_reward = -jp.abs(velocity[0] - IDEAL_VELOCITY)
 
         # # Ignore the first element of the body orientation quaternion,
         # # since that's the one that should be one (and the others zero)
@@ -232,24 +245,24 @@ class Eye(PipelineEnv):
         else:
             healthy_reward = self._healthy_reward * is_healthy
         last_action = state.info["last_action"]
-        ctrl_cost = self._ctrl_cost_weight * jp.sum(jp.abs(action - last_action))
-        contact_cost = 0.0
+        # ctrl_cost = self._ctrl_cost_weight * jp.sum(jp.abs(action - last_action))
+        # contact_cost = 0.0
 
         obs = self._get_obs(pipeline_state, last_action)
         reward = (
             forward_reward
             + orientation_reward
             + healthy_reward
-            - ctrl_cost
-            - contact_cost
+            # - ctrl_cost
+            # - contact_cost
         )
         done = 1.0 - is_healthy if self._terminate_when_unhealthy else 0.0
         state.metrics.update(
             reward_forward=forward_reward,
             reward_orientation=orientation_reward,
             reward_survive=healthy_reward,
-            reward_ctrl=-ctrl_cost,
-            reward_contact=-contact_cost,
+            # reward_ctrl=-ctrl_cost,
+            # reward_contact=-contact_cost,
             x_position=pipeline_state.x.pos[0, 0],
             y_position=pipeline_state.x.pos[0, 1],
             distance_from_origin=math.safe_norm(pipeline_state.x.pos[0]),
@@ -270,7 +283,7 @@ class Eye(PipelineEnv):
             qpos = pipeline_state.q[2:]
 
         smushed = jp.concatenate((qpos, qvel, last_action))
-        assert smushed.shape == (29,)
+        assert smushed.shape == OBSERVATION_SHAPE
         return smushed
 
 
