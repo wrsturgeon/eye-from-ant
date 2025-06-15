@@ -22,7 +22,7 @@
     <joint armature="0.045" range="-90 90"/>
     <!-- <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="ankle_3" gear="150"/> -->
     <!-- <position kp="210.1" ctrllimited="true" ctrlrange="-90 90" forcelimited="true" forcerange="-5 5"/> -->
-    <position kp="211" ctrllimited="true" inheritrange="1" dampratio="0.5" forcelimited="true" forcerange="-10 10"/>
+    <position kp="211" ctrllimited="true" inheritrange="1" dampratio="1" forcelimited="true" forcerange="-5 5"/>
   </default>
   <asset>
     <texture builtin="gradient" height="100" rgb1="1 1 1" rgb2="0 0 0" type="skybox" width="100"/>
