@@ -13,8 +13,10 @@ from jax import numpy as jp, debug
 import mujoco
 
 
-ACTION_SHAPE = (9,)
-OBSERVATION_SHAPE = (38,)
+N_LEGS = 3
+SERVOS_PER_LEG = 3
+ACTION_SHAPE = (SERVOS_PER_LEG * N_LEGS,)
+OBSERVATION_SHAPE = (11 + 2 * SERVOS_PER_LEG * N_LEGS,)
 
 
 IDEAL_VELOCITY = 1  # m/s
@@ -93,15 +95,6 @@ class Eye(PipelineEnv):
     | 26  | joint angular velocity                                       | roll_3                         | hinge | angle (rad)              |
     | 27  | joint angular velocity                                       | hip_3                          | hinge | angle (rad)              |
     | 28  | joint angular velocity                                       | knee_3                         | hinge | angle (rad)              |
-    | 29  | last requested angle for this servo                          | roll_1                         | hinge | angle (rad)              |
-    | 30  | last requested angle for this servo                          | hip_1                          | hinge | angle (rad)              |
-    | 31  | last requested angle for this servo                          | knee_1                         | hinge | angle (rad)              |
-    | 32  | last requested angle for this servo                          | roll_2                         | hinge | angle (rad)              |
-    | 33  | last requested angle for this servo                          | hip_2                          | hinge | angle (rad)              |
-    | 34  | last requested angle for this servo                          | knee_2                         | hinge | angle (rad)              |
-    | 35  | last requested angle for this servo                          | roll_3                         | hinge | angle (rad)              |
-    | 36  | last requested angle for this servo                          | hip_3                          | hinge | angle (rad)              |
-    | 37  | last requested angle for this servo                          | knee_3                         | hinge | angle (rad)              |
 
     The (x,y,z) coordinates are translational DOFs while the orientations are
     rotational DOFs expressed as quaternions.
@@ -116,10 +109,10 @@ class Eye(PipelineEnv):
       positive if the ant moves forward (right) desired.
     - *reward_orientation*: Reward for facing forward, not turning, flipping, etc.
     - *reward_survive*: Every timestep that the ant is alive, it gets a reward of 1.
-    # - *reward_ctrl*: A negative reward for penalising the ant if it takes actions
-    #   that are too large. It is measured as *coefficient **x**
-    #   sum(action<sup>2</sup>)* where *coefficient* is a parameter set for the
-    #   control and has a default value of 0.5.
+    - *reward_ctrl*: A negative reward for penalising the ant if it takes actions
+      that are too large. It is measured as *coefficient **x**
+      sum(action<sup>2</sup>)* where *coefficient* is a parameter set for the
+      control and has a default value of 0.5.
     # - *contact_cost*: A negative reward for penalising the ant if the external
     #   contact force is too large. It is calculated *0.5 * 0.001 *
     #   sum(clip(external contact force to [-1,1])<sup>2</sup>)*.
@@ -147,7 +140,7 @@ class Eye(PipelineEnv):
 
     def __init__(
         self,
-        # ctrl_cost_weight=0.5,
+        ctrl_cost_weight=0.5,
         # contact_cost_weight=5e-4,
         healthy_reward=1.0,
         terminate_when_unhealthy=True,
@@ -166,7 +159,7 @@ class Eye(PipelineEnv):
 
         super().__init__(sys=sys, backend=backend, **kwargs)
 
-        # self._ctrl_cost_weight = ctrl_cost_weight
+        self._ctrl_cost_weight = ctrl_cost_weight
         # self._contact_cost_weight = contact_cost_weight
         self._healthy_reward = healthy_reward
         self._terminate_when_unhealthy = terminate_when_unhealthy
@@ -188,15 +181,14 @@ class Eye(PipelineEnv):
         qd = hi * jax.random.normal(rng2, (self.sys.qd_size(),))
 
         pipeline_state = self.pipeline_init(q, qd)
-        last_action = jp.zeros(ACTION_SHAPE)
-        obs = self._get_obs(pipeline_state, last_action)
+        obs = self._get_obs(pipeline_state)
 
         reward, done, zero = jp.zeros(3)
         metrics = {
             "reward_forward": zero,
             "reward_orientation": zero,
             "reward_survive": zero,
-            # "reward_ctrl": zero,
+            "reward_ctrl": zero,
             # "reward_contact": zero,
             "x_position": zero,
             "y_position": zero,
@@ -204,9 +196,7 @@ class Eye(PipelineEnv):
             "x_velocity": zero,
             "y_velocity": zero,
         }
-        info = {
-            "last_action": last_action,
-        }
+        info = {}
         return State(
             pipeline_state=pipeline_state,
             obs=obs,
@@ -244,16 +234,18 @@ class Eye(PipelineEnv):
             healthy_reward = self._healthy_reward
         else:
             healthy_reward = self._healthy_reward * is_healthy
-        last_action = state.info["last_action"]
-        # ctrl_cost = self._ctrl_cost_weight * jp.sum(jp.abs(action - last_action))
-        # contact_cost = 0.0
 
-        obs = self._get_obs(pipeline_state, last_action)
+        servo_torques = pipeline_state.qfrc_actuator[:-(N_LEGS * SERVOS_PER_LEG)]
+        ctrl_cost = self._ctrl_cost_weight * jp.sum(
+            jp.abs(servo_torques)
+        )
+
+        obs = self._get_obs(pipeline_state)
         reward = (
             forward_reward
             + orientation_reward
             + healthy_reward
-            # - ctrl_cost
+            - ctrl_cost
             # - contact_cost
         )
         done = 1.0 - is_healthy if self._terminate_when_unhealthy else 0.0
@@ -261,7 +253,7 @@ class Eye(PipelineEnv):
             reward_forward=forward_reward,
             reward_orientation=orientation_reward,
             reward_survive=healthy_reward,
-            # reward_ctrl=-ctrl_cost,
+            reward_ctrl=-ctrl_cost,
             # reward_contact=-contact_cost,
             x_position=pipeline_state.x.pos[0, 0],
             y_position=pipeline_state.x.pos[0, 1],
@@ -269,12 +261,11 @@ class Eye(PipelineEnv):
             x_velocity=velocity[0],
             y_velocity=velocity[1],
         )
-        state.info.update(last_action=action)
         return state.replace(
             pipeline_state=pipeline_state, obs=obs, reward=reward, done=done
         )
 
-    def _get_obs(self, pipeline_state: base.State, last_action) -> jax.Array:
+    def _get_obs(self, pipeline_state: base.State) -> jax.Array:
         """Observe eye body position and velocities."""
         qpos = pipeline_state.q
         qvel = pipeline_state.qd
@@ -282,8 +273,8 @@ class Eye(PipelineEnv):
         if self._exclude_current_positions_from_observation:
             qpos = pipeline_state.q[2:]
 
-        smushed = jp.concatenate((qpos, qvel, last_action))
-        assert smushed.shape == OBSERVATION_SHAPE
+        smushed = jp.concatenate((qpos, qvel))
+        assert smushed.shape == OBSERVATION_SHAPE, f"{smushed.shape} =/= {OBSERVATION_SHAPE}"
         return smushed
 
 

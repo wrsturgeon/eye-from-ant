@@ -48,7 +48,7 @@ with open("init.png", "wb") as f:
 # We determined some reasonable hyperparameters offline and share them here.
 train_fn = functools.partial(
     ppo.train,
-    num_timesteps=100_000_000,  # 50_000_000,
+    num_timesteps=25_000_000,  # 100_000_000,  # 50_000_000,
     num_evals=10,
     reward_scaling=10,
     episode_length=1000,
@@ -58,7 +58,7 @@ train_fn = functools.partial(
     num_minibatches=32,
     num_updates_per_batch=4,
     discounting=0.97,
-    learning_rate=3e-3, # 3e-4,
+    learning_rate=3e-3,  # 3e-4,
     entropy_cost=1e-2,
     num_envs=4096,
     batch_size=2048,
