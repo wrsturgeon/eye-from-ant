@@ -24,8 +24,8 @@ backend = "mjx"
 env = envs.get_environment(env_name=env_name, backend=backend)
 state = jax.jit(env.reset)(rng=jax.random.PRNGKey(seed=0))
 
-with open("init.png", "wb") as f:
-    f.write(image.render(env.sys, [state.pipeline_state]))
+# with open("init.png", "wb") as f:
+#     f.write(image.render(env.sys, [state.pipeline_state]))
 
 # # Training
 #
@@ -48,7 +48,7 @@ with open("init.png", "wb") as f:
 # We determined some reasonable hyperparameters offline and share them here.
 train_fn = functools.partial(
     ppo.train,
-    num_timesteps=25_000_000,  # 100_000_000,  # 50_000_000,
+    num_timesteps=200_000_000,  # 25_000_000,  # 100_000_000,  # 50_000_000,
     num_evals=10,
     reward_scaling=10,
     episode_length=1000,
@@ -77,12 +77,18 @@ def progress(num_steps, metrics):
     times.append(datetime.now())
     xdata.append(num_steps)
     ydata.append(metrics["eval/episode_reward"])
+
     plt.xlim([0, train_fn.keywords["num_timesteps"]])
     plt.ylim([min_y, max_y])
     plt.xlabel("# environment steps")
     plt.ylabel("reward per episode")
     plt.plot(xdata, ydata)
     plt.savefig(f"reward_after_{num_steps}_steps.png")
+
+    print()
+    print("    Metrics:")
+    for k, v in metrics.items():
+        print(f"        {k}: {v}")
 
 
 EVAL_ENV = envs.get_environment(env_name=env_name, backend=backend)
@@ -100,7 +106,6 @@ def snapshot(
     make_policy: Callable,
     params,
 ) -> None:
-    print(f"Rendering a snapshot...")
     policy = make_policy(params)
     snapshot_folder = f"snapshot_step_{current_step}"
     makedirs(snapshot_folder, exist_ok=True)

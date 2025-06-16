@@ -9,8 +9,8 @@ from brax.envs.base import PipelineEnv, State
 from brax.io import mjcf
 from etils import epath
 import jax
-from jax import numpy as jp, debug
-import mujoco
+from jax import debug, numpy as jp
+from mujoco import mj_name2id, mjtObj
 
 
 N_LEGS = 3
@@ -19,7 +19,7 @@ ACTION_SHAPE = (SERVOS_PER_LEG * N_LEGS,)
 OBSERVATION_SHAPE = (11 + 2 * SERVOS_PER_LEG * N_LEGS,)
 
 
-IDEAL_VELOCITY = 1  # m/s
+IDEAL_VELOCITY = 0.5  # m/s
 
 
 class Eye(PipelineEnv):
@@ -103,16 +103,19 @@ class Eye(PipelineEnv):
 
     The reward consists of three parts:
 
-    - *reward_forward*: A reward of moving forward which is measured as
+    - *reward_forward*: Reward for moving forward, measured as
       *(x-coordinate before action - x-coordinate after action)/dt*. *dt* is the
       time between actions - the default *dt = 0.05*. This reward would be
       positive if the ant moves forward (right) desired.
     - *reward_orientation*: Reward for facing forward, not turning, flipping, etc.
     - *reward_survive*: Every timestep that the ant is alive, it gets a reward of 1.
-    - *reward_torque*: A negative reward for total torque used.
-    # - *contact_cost*: A negative reward for penalising the ant if the external
+    - *reward_torque*: Negative reward for total torque used.
+    # - *contact_cost*: Negative reward for penalising the ant if the external
     #   contact force is too large. It is calculated *0.5 * 0.001 *
     #   sum(clip(external contact force to [-1,1])<sup>2</sup>)*.
+    - *reward_slip*: Negative reward for foot slipping (velocity parallel to floor plane if very close).
+    - *reward_step*: Negative reward for stopping contact, meant to discourage "skittering" instead of confident stepping.
+    - *reward_drift*: Negative reward for moving sideways, based on position, not velocity.
 
     ### Starting State
 
@@ -137,9 +140,12 @@ class Eye(PipelineEnv):
 
     def __init__(
         self,
-        torque_cost_weight=0.5,
+        # torque_cost_weight=0.5,
         # contact_cost_weight=5e-4,
-        healthy_reward=1.0,
+        slip_cost_weight=50.0,
+        step_cost_weight=0.5,
+        drift_cost_weight=0.01,
+        healthy_reward_weight=10.0,
         terminate_when_unhealthy=True,
         healthy_z_range=(0.2, None),
         reset_noise_scale=0.1,
@@ -156,15 +162,49 @@ class Eye(PipelineEnv):
 
         super().__init__(sys=sys, backend=backend, **kwargs)
 
-        self._torque_cost_weight = torque_cost_weight
+        # self._torque_cost_weight = torque_cost_weight
         # self._contact_cost_weight = contact_cost_weight
-        self._healthy_reward = healthy_reward
+        self._slip_cost_weight = slip_cost_weight
+        self._step_cost_weight = step_cost_weight
+        self._drift_cost_weight = step_cost_weight
+        self._healthy_reward_weight = healthy_reward_weight
         self._terminate_when_unhealthy = terminate_when_unhealthy
         self._healthy_z_range = healthy_z_range
         self._reset_noise_scale = reset_noise_scale
         self._exclude_current_positions_from_observation = (
             exclude_current_positions_from_observation
         )
+
+        foot_ids = []
+        i = 0
+        while True:
+            id = mj_name2id(sys.mj_model, mjtObj.mjOBJ_GEOM.value, f"foot{i}")
+            if id == -1:
+                assert i > 0, "No feet found!"
+                break
+            foot_ids.append(id)
+            i += 1
+        self._foot_ids = tuple(foot_ids)
+        foot_radius = sys.mj_model.geom_size[foot_ids[0], 0]
+        for id in self._foot_ids:
+            assert (
+                sys.mj_model.geom_size[id, 0] == foot_radius
+            ), f"{sys.mj_model.geom_size[id]} == {foot_radius}"
+        self._foot_radius = foot_radius
+
+        # print()
+        # print("Contact pairs:")
+        # for i, pair_of_ids in enumerate(zip(sys.mj_model.pair_geom1, sys.mj_model.pair_geom2)):
+        #     print(f"  contact #{i}:")
+        #     for id in pair_of_ids:
+        #         try:
+        #             i = self._foot_ids.index(id)
+        #             print(f"    foot #{i}")
+        #         except ValueError:
+        #             print("    [not a foot]")
+        #     print()
+        # print("  [end of contact pairs]")
+        # print()
 
     def reset(self, rng: jax.Array) -> State:
         """Resets the environment to an initial state."""
@@ -185,8 +225,11 @@ class Eye(PipelineEnv):
             "reward_forward": zero,
             "reward_orientation": zero,
             "reward_survive": zero,
-            "reward_torque": zero,
+            # "reward_torque": zero,
             # "reward_contact": zero,
+            "reward_slip": zero,
+            "reward_step": zero,
+            "reward_drift": zero,
             "x_position": zero,
             "y_position": zero,
             "distance_from_origin": zero,
@@ -210,7 +253,9 @@ class Eye(PipelineEnv):
         pipeline_state = self.pipeline_step(pipeline_state0, action)
 
         velocity = (pipeline_state.x.pos[0] - pipeline_state0.x.pos[0]) / self.dt
-        forward_reward = -jp.abs(velocity[0] - IDEAL_VELOCITY)
+        forward_reward = -jp.sum(
+            jp.abs(velocity - jp.asarray([IDEAL_VELOCITY, 0.0, 0.0]))
+        )
 
         # # Ignore the first element of the body orientation quaternion,
         # # since that's the one that should be one (and the others zero)
@@ -227,31 +272,87 @@ class Eye(PipelineEnv):
             is_healthy = jp.where(zpos < min_z, 0.0, is_healthy)
         if max_z is not None:
             is_healthy = jp.where(zpos > max_z, 0.0, is_healthy)
-        if self._terminate_when_unhealthy:
-            healthy_reward = self._healthy_reward
-        else:
-            healthy_reward = self._healthy_reward * is_healthy
+        healthy_reward = self._healthy_reward_weight
+        if not self._terminate_when_unhealthy:
+            healthy_reward *= is_healthy
 
-        servo_torques = pipeline_state.qfrc_actuator[:-(N_LEGS * SERVOS_PER_LEG)]
-        torque_cost = self._torque_cost_weight * jp.sum(
-            jp.abs(servo_torques)
+        # servo_torques = pipeline_state.qfrc_actuator[: -(N_LEGS * SERVOS_PER_LEG)]
+        # torque_cost = self._torque_cost_weight * jp.sum(jp.abs(servo_torques))
+
+        # # debug.print("{pos}", pos=pipeline_state.geom_xpos[self._foot_ids,])
+        # foot_pos = pipeline_state.geom_xpos[self._foot_ids,]
+        # prev_foot_pos = pipeline_state0.geom_xpos[self._foot_ids,]
+        # near_floor = foot_pos[..., 2:3] < self._foot_diameter
+        # foot_velocity_viz_floor = jp.sum(jp.square(foot_pos[..., :2] - prev_foot_pos[..., :2])) / self.dt
+        # slip_cost = jp.sum(foot_velocity_viz_floor * near_floor)
+
+        # assert pipeline_state.contact.geom.shape == pipeline_state0.contact.geom.shape, f"{pipeline_state.contact.geom.shape} =/= {pipeline_state0.contact.geom.shape}"
+        # debug.print("{contact}", contact=(1 * (pipeline_state.contact.dist < 0)))
+        # debug.print("{ids}", ids=pipeline_state.contact.geom)
+
+        # foot_pos = pipeline_state.geom_xpos[self._foot_ids,]
+        # prev_foot_pos = pipeline_state0.geom_xpos[self._foot_ids,]
+        # foot_speed_squared = jp.sum(jp.square(foot_pos - prev_foot_pos), axis=-1) / self.dt
+        # active_contact = pipeline_state.contact.dist < self._foot_radius # : (N_CONTACT_PAIRS,)
+        # relevant_contacts_by_geom = [(id, jp.any(pipeline_state.contact.geom == id, axis=-1)) for id in self._foot_ids] # : (N_GEOMS, N_CONTACT_PAIRS)
+        # contact_by_geom = [(id, jp.any(jp.logical_and(relevant_contacts, active_contact))) for id, relevant_contacts in relevant_contacts_by_geom] # : (N_GEOMS,)
+        # slip_cost_by_geom = [contact * foot_speed_squared[id] for id, contact in contact_by_geom]
+        # slip_cost = sum(slip_cost_by_geom)
+
+        active_contact = pipeline_state.contact.dist <= 0  # : bool[N_CONTACT_PAIRS]
+        prev_contact = pipeline_state0.contact.dist <= 0  # : bool[N_CONTACT_PAIRS]
+        persistent_contact = jp.logical_and(
+            active_contact, prev_contact
+        )  # : bool[N_CONTACT_PAIRS]
+        foot_in_each_contact_pair = jp.asarray(
+            [
+                jp.any(pipeline_state.contact.geom == id, axis=-1)
+                for id in self._foot_ids
+            ]
+        )  # : bool[N_FEET, N_CONTACT_PAIRS]
+        foot_contacting_anything = jp.any(
+            foot_in_each_contact_pair * persistent_contact[jp.newaxis], axis=-1
+        )  # : bool[N_FEET]
+        foot_pos = pipeline_state.geom_xpos[self._foot_ids,]
+        prev_foot_pos = pipeline_state0.geom_xpos[self._foot_ids,]
+        foot_speed_along_floor = (
+            jp.sqrt(
+                jp.sum(jp.square(foot_pos[..., :2] - prev_foot_pos[..., :2]), axis=-1)
+            )
+            / self.dt
         )
+        slip_cost = jp.sum(
+            self._slip_cost_weight * foot_contacting_anything * foot_speed_along_floor
+        )
+
+        step_cost = jp.sum(
+            self._step_cost_weight
+            * jp.logical_and(prev_contact, jp.logical_not(active_contact))
+        )
+
+        drift_cost = self._drift_cost_weight * jp.abs(pipeline_state.x.pos[0, ..., 1])
 
         obs = self._get_obs(pipeline_state)
         reward = (
             forward_reward
             + orientation_reward
             + healthy_reward
-            - torque_cost
+            # - torque_cost
             # - contact_cost
+            - slip_cost
+            - step_cost
+            - drift_cost
         )
         done = 1.0 - is_healthy if self._terminate_when_unhealthy else 0.0
         state.metrics.update(
             reward_forward=forward_reward,
             reward_orientation=orientation_reward,
             reward_survive=healthy_reward,
-            reward_torque=-torque_cost,
+            # reward_torque=-torque_cost,
             # reward_contact=-contact_cost,
+            reward_slip=-slip_cost,
+            reward_step=-step_cost,
+            reward_drift=-drift_cost,
             x_position=pipeline_state.x.pos[0, 0],
             y_position=pipeline_state.x.pos[0, 1],
             distance_from_origin=math.safe_norm(pipeline_state.x.pos[0]),
@@ -271,7 +372,9 @@ class Eye(PipelineEnv):
             qpos = pipeline_state.q[2:]
 
         smushed = jp.concatenate((qpos, qvel))
-        assert smushed.shape == OBSERVATION_SHAPE, f"{smushed.shape} =/= {OBSERVATION_SHAPE}"
+        assert (
+            smushed.shape == OBSERVATION_SHAPE
+        ), f"{smushed.shape} =/= {OBSERVATION_SHAPE}"
         return smushed
 
 
