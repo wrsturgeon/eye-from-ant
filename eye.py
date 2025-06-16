@@ -17,9 +17,9 @@ from mujoco import mj_name2id, mjtObj
 
 N_LEGS = 3
 SERVOS_PER_LEG = 3
-ACTION_PERIOD = 20  # ms
+ACTION_PERIOD = 0.02  # 20ms
 ACTION_SIZE = SERVOS_PER_LEG * N_LEGS
-HISTORY_SIZE = 15  # 1000 // ACTION_PERIOD # Hz
+HISTORY_SIZE = 1  # 15
 OBSERVATION_SHAPE = (11 + HISTORY_SIZE * ACTION_SIZE,)
 
 
@@ -138,16 +138,16 @@ class Eye(PipelineEnv):
         reset_noise_scale=0.1,
         exclude_current_positions_from_observation=True,
         backend="mjx",
+        n_frames=None,
         **kwargs,
     ):
         path = "./eye.xml"
         sys = mjcf.load(path)
 
-        n_frames = 5
+        if n_frames is None:
+            n_frames = ACTION_PERIOD / sys.opt.timestep
 
-        kwargs["n_frames"] = kwargs.get("n_frames", n_frames)
-
-        super().__init__(sys=sys, backend=backend, **kwargs)
+        super().__init__(sys=sys, backend=backend, n_frames=n_frames, **kwargs)
 
         # self._torque_cost_weight = torque_cost_weight
         # self._contact_cost_weight = contact_cost_weight
@@ -206,7 +206,7 @@ class Eye(PipelineEnv):
         qd = hi * jax.random.normal(rng2, (self.sys.qd_size(),))
 
         pipeline_state = self.pipeline_init(q, qd)
-        history = jp.zeros((HISTORY_SIZE,) + (ACTION_SIZE,))
+        history = jp.zeros((HISTORY_SIZE, ACTION_SIZE))
         obs = self._get_obs(pipeline_state, history)
 
         reward, done, zero = jp.zeros(3)

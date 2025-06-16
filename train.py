@@ -24,6 +24,15 @@ backend = "mjx"
 env = envs.get_environment(env_name=env_name, backend=backend)
 state = jax.jit(env.reset)(rng=jax.random.PRNGKey(seed=0))
 
+
+TRAINING_SECONDS_TOTAL = 1_000_000
+EPISODE_SECONDS = 5
+
+
+N_ACTIONS_TOTAL = TRAINING_SECONDS_TOTAL / eye.ACTION_PERIOD
+N_ACTIONS_PER_EPISODE = 5 / eye.ACTION_PERIOD
+
+
 # with open("init.png", "wb") as f:
 #     f.write(image.render(env.sys, [state.pipeline_state]))
 
@@ -48,10 +57,10 @@ state = jax.jit(env.reset)(rng=jax.random.PRNGKey(seed=0))
 # We determined some reasonable hyperparameters offline and share them here.
 train_fn = functools.partial(
     ppo.train,
-    num_timesteps=200_000_000,  # 25_000_000,  # 100_000_000,  # 50_000_000,
+    num_timesteps=N_ACTIONS_TOTAL,
     num_evals=10,
     reward_scaling=10,
-    episode_length=1000,
+    episode_length=N_ACTIONS_PER_EPISODE,
     normalize_observations=True,
     action_repeat=1,
     unroll_length=5,
