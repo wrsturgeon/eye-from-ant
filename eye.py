@@ -4,19 +4,23 @@
 # Based on <https://github.com/google/brax/blob/759256a27ec495c8307bcd141e0798c5f090a1df/brax/envs/ant.py>.
 
 
+from beartype import beartype
 from brax import base, envs, math
 from brax.envs.base import PipelineEnv, State
 from brax.io import mjcf
 from etils import epath
 import jax
 from jax import debug, numpy as jp
+from jaxtyping import jaxtyped, Array, Float, UInt
 from mujoco import mj_name2id, mjtObj
 
 
 N_LEGS = 3
 SERVOS_PER_LEG = 3
-ACTION_SHAPE = (SERVOS_PER_LEG * N_LEGS,)
-OBSERVATION_SHAPE = (11 + 2 * SERVOS_PER_LEG * N_LEGS,)
+ACTION_PERIOD = 20  # ms
+ACTION_SIZE = SERVOS_PER_LEG * N_LEGS
+HISTORY_SIZE = 15  # 1000 // ACTION_PERIOD # Hz
+OBSERVATION_SHAPE = (11 + HISTORY_SIZE * ACTION_SIZE,)
 
 
 IDEAL_VELOCITY = 0.5  # m/s
@@ -64,37 +68,20 @@ class Eye(PipelineEnv):
 
     The observation is an array whose elements correspond to the following:
 
-    | Num | Observation                                                  | Name (in corresponding config) | Joint | Unit                     |
-    |-----|--------------------------------------------------------------|--------------------------------|-------|--------------------------|
-    |  0  | z-coordinate of the torso (centre)                           | torso                          | free  | position (m)             |
-    |  1  | w-orientation of the torso (centre)                          | torso                          | free  | angle (rad)              |
-    |  2  | x-orientation of the torso (centre)                          | torso                          | free  | angle (rad)              |
-    |  3  | y-orientation of the torso (centre)                          | torso                          | free  | angle (rad)              |
-    |  4  | z-orientation of the torso (centre)                          | torso                          | free  | angle (rad)              |
-    |  5  | joint angle                                                  | roll_1                         | hinge | angle (rad)              |
-    |  6  | joint angle                                                  | hip_1                          | hinge | angle (rad)              |
-    |  7  | joint angle                                                  | knee_1                         | hinge | angle (rad)              |
-    |  8  | joint angle                                                  | roll_2                         | hinge | angle (rad)              |
-    |  9  | joint angle                                                  | hip_2                          | hinge | angle (rad)              |
-    | 10  | joint angle                                                  | knee_2                         | hinge | angle (rad)              |
-    | 11  | joint angle                                                  | roll_3                         | hinge | angle (rad)              |
-    | 12  | joint angle                                                  | hip_3                          | hinge | angle (rad)              |
-    | 13  | joint angle                                                  | knee_3                         | hinge | angle (rad)              |
-    | 14  | x-coordinate velocity of the torso                           | torso                          | free  | velocity (m/s)           |
-    | 15  | y-coordinate velocity of the torso                           | torso                          | free  | velocity (m/s)           |
-    | 16  | z-coordinate velocity of the torso                           | torso                          | free  | velocity (m/s)           |
-    | 17  | x-coordinate angular velocity of the torso                   | torso                          | free  | angular velocity (rad/s) |
-    | 18  | y-coordinate angular velocity of the torso                   | torso                          | free  | angular velocity (rad/s) |
-    | 19  | z-coordinate angular velocity of the torso                   | torso                          | free  | angular velocity (rad/s) |
-    | 20  | joint angular velocity                                       | roll_1                         | hinge | angle (rad)              |
-    | 21  | joint angular velocity                                       | hip_1                          | hinge | angle (rad)              |
-    | 22  | joint angular velocity                                       | knee_1                         | hinge | angle (rad)              |
-    | 23  | joint angular velocity                                       | roll_2                         | hinge | angle (rad)              |
-    | 24  | joint angular velocity                                       | hip_2                          | hinge | angle (rad)              |
-    | 25  | joint angular velocity                                       | knee_2                         | hinge | angle (rad)              |
-    | 26  | joint angular velocity                                       | roll_3                         | hinge | angle (rad)              |
-    | 27  | joint angular velocity                                       | hip_3                          | hinge | angle (rad)              |
-    | 28  | joint angular velocity                                       | knee_3                         | hinge | angle (rad)              |
+    | Num | Observation                                   | Name (in corresponding config) | Joint | Unit                     |
+    |-----|-----------------------------------------------|--------------------------------|-------|--------------------------|
+    |  0  | z-coordinate of the torso (centre)            | torso                          | free  | position (m)             |
+    |  1  | w-orientation of the torso (centre)           | torso                          | free  | angle (rad)              |
+    |  2  | x-orientation of the torso (centre)           | torso                          | free  | angle (rad)              |
+    |  3  | y-orientation of the torso (centre)           | torso                          | free  | angle (rad)              |
+    |  4  | z-orientation of the torso (centre)           | torso                          | free  | angle (rad)              |
+    |  5  | x-coordinate velocity of the torso            | torso                          | free  | velocity (m/s)           |
+    |  6  | y-coordinate velocity of the torso            | torso                          | free  | velocity (m/s)           |
+    |  7  | z-coordinate velocity of the torso            | torso                          | free  | velocity (m/s)           |
+    |  8  | x-coordinate angular velocity of the torso    | torso                          | free  | angular velocity (rad/s) |
+    |  9  | y-coordinate angular velocity of the torso    | torso                          | free  | angular velocity (rad/s) |
+    | 10  | z-coordinate angular velocity of the torso    | torso                          | free  | angular velocity (rad/s) |
+    | etc | history of previous actions, not observations | n/a                            |  n/a  | n/a                      |
 
     The (x,y,z) coordinates are translational DOFs while the orientations are
     rotational DOFs expressed as quaternions.
@@ -206,7 +193,8 @@ class Eye(PipelineEnv):
         # print("  [end of contact pairs]")
         # print()
 
-    def reset(self, rng: jax.Array) -> State:
+    @jaxtyped(typechecker=beartype)
+    def reset(self, rng: UInt[Array, "2"]) -> State:
         """Resets the environment to an initial state."""
         rng, rng1, rng2 = jax.random.split(rng, 3)
 
@@ -218,7 +206,8 @@ class Eye(PipelineEnv):
         qd = hi * jax.random.normal(rng2, (self.sys.qd_size(),))
 
         pipeline_state = self.pipeline_init(q, qd)
-        obs = self._get_obs(pipeline_state)
+        history = jp.zeros((HISTORY_SIZE,) + (ACTION_SIZE,))
+        obs = self._get_obs(pipeline_state, history)
 
         reward, done, zero = jp.zeros(3)
         metrics = {
@@ -236,7 +225,7 @@ class Eye(PipelineEnv):
             "x_velocity": zero,
             "y_velocity": zero,
         }
-        info = {}
+        info = {"history": history, "step": jp.zeros((), dtype=jp.uint32)}
         return State(
             pipeline_state=pipeline_state,
             obs=obs,
@@ -246,6 +235,7 @@ class Eye(PipelineEnv):
             info=info,
         )
 
+    @jaxtyped(typechecker=beartype)
     def step(self, state: State, action: jax.Array) -> State:
         """Run one timestep of the environment's dynamics."""
         pipeline_state0 = state.pipeline_state
@@ -332,7 +322,7 @@ class Eye(PipelineEnv):
 
         drift_cost = self._drift_cost_weight * jp.abs(pipeline_state.x.pos[0, ..., 1])
 
-        obs = self._get_obs(pipeline_state)
+        obs = self._get_obs(pipeline_state, state.info["history"])
         reward = (
             forward_reward
             + orientation_reward
@@ -359,19 +349,26 @@ class Eye(PipelineEnv):
             x_velocity=velocity[0],
             y_velocity=velocity[1],
         )
+        state.info.update(
+            history=jp.concat([action[jp.newaxis], state.info["history"][:-1]]),
+            step=(state.info["step"] + 1),
+        )
         return state.replace(
             pipeline_state=pipeline_state, obs=obs, reward=reward, done=done
         )
 
-    def _get_obs(self, pipeline_state: base.State) -> jax.Array:
+    @jaxtyped(typechecker=beartype)
+    def _get_obs(
+        self, pipeline_state: base.State, history: Float[Array, "history action"]
+    ) -> jax.Array:
         """Observe eye body position and velocities."""
-        qpos = pipeline_state.q
-        qvel = pipeline_state.qd
+        qpos = pipeline_state.q[:7]
+        qvel = pipeline_state.qd[:6]
 
         if self._exclude_current_positions_from_observation:
-            qpos = pipeline_state.q[2:]
+            qpos = qpos[2:]
 
-        smushed = jp.concatenate((qpos, qvel))
+        smushed = jp.concatenate((qpos, qvel, history.flatten()))
         assert (
             smushed.shape == OBSERVATION_SHAPE
         ), f"{smushed.shape} =/= {OBSERVATION_SHAPE}"
