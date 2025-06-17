@@ -20,7 +20,9 @@ SERVOS_PER_LEG = 3
 ACTION_PERIOD = 0.02  # 20ms
 ACTION_SIZE = SERVOS_PER_LEG * N_LEGS
 HISTORY_SIZE = 2  # 15
-OBSERVATION_SHAPE = (11 + HISTORY_SIZE * ACTION_SIZE,)
+N_IMU_AXES = 6
+N_FSR = N_LEGS
+OBSERVATION_SHAPE = (N_FSR + N_IMU_AXES + HISTORY_SIZE * ACTION_SIZE,)
 
 
 IDEAL_VELOCITY = 0.5  # m/s
@@ -356,7 +358,7 @@ class Eye(PipelineEnv):
         if self._exclude_current_positions_from_observation:
             qpos = qpos[2:]
 
-        smushed = jp.concatenate((qpos, qvel, history.flatten()))
+        smushed = jp.concatenate((pipeline_state.sensordata, history.flatten()))
         assert (
             smushed.shape == OBSERVATION_SHAPE
         ), f"{smushed.shape} =/= {OBSERVATION_SHAPE}"
