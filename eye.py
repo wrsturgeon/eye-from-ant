@@ -306,10 +306,9 @@ class Eye(PipelineEnv):
 
         drift_cost = self._drift_cost_weight * jp.abs(pipeline_state.x.pos[0, ..., 1])
 
-        contact_reward = (
-            self._contact_reward_weight * jp.sum(foot_contacting_anything) / N_LEGS
+        contact_reward = self._contact_reward_weight * (
+            jp.sum(1.0 * foot_contacting_anything) >= (0.5 * N_LEGS)
         )
-        # contact_reward = self._contact_reward_weight * (jp.sum(1.0 * foot_contacting_anything) >= (0.5 * N_LEGS))
 
         obs = self._get_obs(pipeline_state, state.info["history"])
         reward = (
