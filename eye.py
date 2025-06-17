@@ -19,10 +19,9 @@ N_LEGS = 3
 SERVOS_PER_LEG = 3
 ACTION_PERIOD = 0.02  # 20ms
 ACTION_SIZE = SERVOS_PER_LEG * N_LEGS
-HISTORY_SIZE = 2  # 15
 N_IMU_AXES = 6
 N_FSR = N_LEGS
-OBSERVATION_SHAPE = (N_FSR + N_IMU_AXES + HISTORY_SIZE * ACTION_SIZE,)
+OBSERVATION_SHAPE = (N_FSR + N_IMU_AXES,)
 
 
 IDEAL_VELOCITY = 0.5  # m/s
@@ -192,8 +191,7 @@ class Eye(PipelineEnv):
         qd = hi * jax.random.normal(rng2, (self.sys.qd_size(),))
 
         pipeline_state = self.pipeline_init(q, qd)
-        history = jp.zeros((HISTORY_SIZE, ACTION_SIZE))
-        obs = self._get_obs(pipeline_state, history)
+        obs = self._get_obs(pipeline_state)
 
         reward, done, zero = jp.zeros(3)
         metrics = {
@@ -211,7 +209,7 @@ class Eye(PipelineEnv):
             "x_velocity": zero,
             "y_velocity": zero,
         }
-        info = {"history": history, "step": jp.zeros((), dtype=jp.uint32)}
+        info = {"step": jp.zeros((), dtype=jp.uint32)}
         return State(
             pipeline_state=pipeline_state,
             obs=obs,
@@ -312,7 +310,7 @@ class Eye(PipelineEnv):
             jp.sum(1.0 * foot_contacting_anything) >= (0.5 * N_LEGS)
         )
 
-        obs = self._get_obs(pipeline_state, state.info["history"])
+        obs = self._get_obs(pipeline_state)
         reward = (
             forward_reward
             + orientation_reward
@@ -340,7 +338,6 @@ class Eye(PipelineEnv):
             y_velocity=velocity[1],
         )
         state.info.update(
-            history=jp.concat([action[jp.newaxis], state.info["history"][:-1]]),
             step=(state.info["step"] + 1),
         )
         return state.replace(
@@ -348,9 +345,7 @@ class Eye(PipelineEnv):
         )
 
     @jaxtyped(typechecker=beartype)
-    def _get_obs(
-        self, pipeline_state: base.State, history: Float[Array, "history action"]
-    ) -> jax.Array:
+    def _get_obs(self, pipeline_state: base.State) -> jax.Array:
         """Observe eye body position and velocities."""
         qpos = pipeline_state.q[:7]
         qvel = pipeline_state.qd[:6]
@@ -358,11 +353,9 @@ class Eye(PipelineEnv):
         if self._exclude_current_positions_from_observation:
             qpos = qpos[2:]
 
-        smushed = jp.concatenate((pipeline_state.sensordata, history.flatten()))
-        assert (
-            smushed.shape == OBSERVATION_SHAPE
-        ), f"{smushed.shape} =/= {OBSERVATION_SHAPE}"
-        return smushed
+        obs = pipeline_state.sensordata
+        assert obs.shape == OBSERVATION_SHAPE, f"{obs.shape} =/= {OBSERVATION_SHAPE}"
+        return obs
 
 
 envs.register_environment("eye", Eye)
