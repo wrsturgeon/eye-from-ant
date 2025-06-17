@@ -19,7 +19,7 @@ N_LEGS = 3
 SERVOS_PER_LEG = 3
 ACTION_PERIOD = 0.02  # 20ms
 ACTION_SIZE = SERVOS_PER_LEG * N_LEGS
-HISTORY_SIZE = 1  # 15
+HISTORY_SIZE = 2  # 15
 OBSERVATION_SHAPE = (11 + HISTORY_SIZE * ACTION_SIZE,)
 
 
@@ -95,14 +95,12 @@ class Eye(PipelineEnv):
       time between actions - the default *dt = 0.05*. This reward would be
       positive if the ant moves forward (right) desired.
     - *reward_orientation*: Reward for facing forward, not turning, flipping, etc.
-    - *reward_survive*: Every timestep that the ant is alive, it gets a reward of 1.
+    # - *reward_survive*: Every timestep that the ant is alive, it gets a reward of 1.
     - *reward_torque*: Negative reward for total torque used.
-    # - *contact_cost*: Negative reward for penalising the ant if the external
-    #   contact force is too large. It is calculated *0.5 * 0.001 *
-    #   sum(clip(external contact force to [-1,1])<sup>2</sup>)*.
     - *reward_slip*: Negative reward for foot slipping (velocity parallel to floor plane if very close).
-    - *reward_step*: Negative reward for stopping contact, meant to discourage "skittering" instead of confident stepping.
+    # - *reward_step*: Negative reward for stopping contact, meant to discourage "skittering" instead of confident stepping.
     - *reward_drift*: Negative reward for moving sideways, based on position, not velocity.
+    - *reward_contact*: Reward per timestep for at least half the feet touching the ground.
 
     ### Starting State
 
@@ -128,11 +126,11 @@ class Eye(PipelineEnv):
     def __init__(
         self,
         # torque_cost_weight=0.5,
-        # contact_cost_weight=5e-4,
         slip_cost_weight=50.0,
-        step_cost_weight=0.5,
+        # step_cost_weight=0.5,
         drift_cost_weight=0.01,
-        healthy_reward_weight=10.0,
+        # healthy_reward_weight=10.0,
+        contact_reward_weight=100.0,
         terminate_when_unhealthy=True,
         healthy_z_range=(0.2, None),
         reset_noise_scale=0.1,
@@ -150,11 +148,11 @@ class Eye(PipelineEnv):
         super().__init__(sys=sys, backend=backend, n_frames=n_frames, **kwargs)
 
         # self._torque_cost_weight = torque_cost_weight
-        # self._contact_cost_weight = contact_cost_weight
         self._slip_cost_weight = slip_cost_weight
-        self._step_cost_weight = step_cost_weight
-        self._drift_cost_weight = step_cost_weight
-        self._healthy_reward_weight = healthy_reward_weight
+        # self._step_cost_weight = step_cost_weight
+        self._drift_cost_weight = drift_cost_weight
+        # self._healthy_reward_weight = healthy_reward_weight
+        self._contact_reward_weight = contact_reward_weight
         self._terminate_when_unhealthy = terminate_when_unhealthy
         self._healthy_z_range = healthy_z_range
         self._reset_noise_scale = reset_noise_scale
@@ -179,20 +177,6 @@ class Eye(PipelineEnv):
             ), f"{sys.mj_model.geom_size[id]} == {foot_radius}"
         self._foot_radius = foot_radius
 
-        # print()
-        # print("Contact pairs:")
-        # for i, pair_of_ids in enumerate(zip(sys.mj_model.pair_geom1, sys.mj_model.pair_geom2)):
-        #     print(f"  contact #{i}:")
-        #     for id in pair_of_ids:
-        #         try:
-        #             i = self._foot_ids.index(id)
-        #             print(f"    foot #{i}")
-        #         except ValueError:
-        #             print("    [not a foot]")
-        #     print()
-        # print("  [end of contact pairs]")
-        # print()
-
     @jaxtyped(typechecker=beartype)
     def reset(self, rng: UInt[Array, "2"]) -> State:
         """Resets the environment to an initial state."""
@@ -213,11 +197,11 @@ class Eye(PipelineEnv):
         metrics = {
             "reward_forward": zero,
             "reward_orientation": zero,
-            "reward_survive": zero,
+            # "reward_survive": zero,
             # "reward_torque": zero,
-            # "reward_contact": zero,
+            "reward_contact": zero,
             "reward_slip": zero,
-            "reward_step": zero,
+            # "reward_step": zero,
             "reward_drift": zero,
             "x_position": zero,
             "y_position": zero,
@@ -262,9 +246,9 @@ class Eye(PipelineEnv):
             is_healthy = jp.where(zpos < min_z, 0.0, is_healthy)
         if max_z is not None:
             is_healthy = jp.where(zpos > max_z, 0.0, is_healthy)
-        healthy_reward = self._healthy_reward_weight
-        if not self._terminate_when_unhealthy:
-            healthy_reward *= is_healthy
+        # healthy_reward = self._healthy_reward_weight
+        # if not self._terminate_when_unhealthy:
+        #     healthy_reward *= is_healthy
 
         # servo_torques = pipeline_state.qfrc_actuator[: -(N_LEGS * SERVOS_PER_LEG)]
         # torque_cost = self._torque_cost_weight * jp.sum(jp.abs(servo_torques))
@@ -315,33 +299,38 @@ class Eye(PipelineEnv):
             self._slip_cost_weight * foot_contacting_anything * foot_speed_along_floor
         )
 
-        step_cost = jp.sum(
-            self._step_cost_weight
-            * jp.logical_and(prev_contact, jp.logical_not(active_contact))
-        )
+        # step_cost = jp.sum(
+        #     self._step_cost_weight
+        #     * jp.logical_and(prev_contact, jp.logical_not(active_contact))
+        # )
 
         drift_cost = self._drift_cost_weight * jp.abs(pipeline_state.x.pos[0, ..., 1])
+
+        contact_reward = (
+            self._contact_reward_weight * jp.sum(foot_contacting_anything) / N_LEGS
+        )
+        # contact_reward = self._contact_reward_weight * (jp.sum(1.0 * foot_contacting_anything) >= (0.5 * N_LEGS))
 
         obs = self._get_obs(pipeline_state, state.info["history"])
         reward = (
             forward_reward
             + orientation_reward
-            + healthy_reward
+            # + healthy_reward
+            + contact_reward
             # - torque_cost
-            # - contact_cost
             - slip_cost
-            - step_cost
+            # - step_cost
             - drift_cost
         )
         done = 1.0 - is_healthy if self._terminate_when_unhealthy else 0.0
         state.metrics.update(
             reward_forward=forward_reward,
             reward_orientation=orientation_reward,
-            reward_survive=healthy_reward,
+            # reward_survive=healthy_reward,
             # reward_torque=-torque_cost,
-            # reward_contact=-contact_cost,
+            reward_contact=contact_reward,
             reward_slip=-slip_cost,
-            reward_step=-step_cost,
+            # reward_step=-step_cost,
             reward_drift=-drift_cost,
             x_position=pipeline_state.x.pos[0, 0],
             y_position=pipeline_state.x.pos[0, 1],

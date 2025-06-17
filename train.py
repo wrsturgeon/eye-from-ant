@@ -25,12 +25,12 @@ env = envs.get_environment(env_name=env_name, backend=backend)
 state = jax.jit(env.reset)(rng=jax.random.PRNGKey(seed=0))
 
 
-TRAINING_SECONDS_TOTAL = 1_000_000
-EPISODE_SECONDS = 5
+TRAINING_SECONDS_TOTAL = 2_000_000
+EPISODE_SECONDS = 2.5
 
 
-N_ACTIONS_TOTAL = TRAINING_SECONDS_TOTAL / eye.ACTION_PERIOD
-N_ACTIONS_PER_EPISODE = 5 / eye.ACTION_PERIOD
+N_ACTIONS_TOTAL = int(TRAINING_SECONDS_TOTAL / eye.ACTION_PERIOD)
+N_ACTIONS_PER_EPISODE = int(EPISODE_SECONDS / eye.ACTION_PERIOD)
 
 
 # with open("init.png", "wb") as f:
@@ -181,7 +181,7 @@ jit_inference_fn = jax.jit(inference_fn)
 rollout = []
 rng = jax.random.PRNGKey(seed=1)
 state = jit_env_reset(rng=rng)
-for _ in range(1000):
+for _ in range(N_ACTIONS_PER_EPISODE):
     rollout.append(state.pipeline_state)
     act_rng, rng = jax.random.split(rng)
     act, _ = jit_inference_fn(state.obs, act_rng)
