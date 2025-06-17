@@ -25,7 +25,7 @@ env = envs.get_environment(env_name=env_name, backend=backend)
 state = jax.jit(env.reset)(rng=jax.random.PRNGKey(seed=0))
 
 
-TRAINING_SECONDS_TOTAL = 2_000_000
+TRAINING_SECONDS_TOTAL = 5_000_000
 EPISODE_SECONDS = 2.5
 
 
@@ -75,7 +75,7 @@ train_fn = functools.partial(
 )
 
 
-max_y = 8_000
+max_y = 1_000
 min_y = 0
 
 xdata, ydata = [], []
